@@ -8,7 +8,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 	
-#define MAXLINE 1024
+#define MAXLINE 1500
 	
 // Driver code
 int main(int argc, char* argv[]) {
@@ -35,7 +35,8 @@ int main(int argc, char* argv[]) {
 	servaddr.sin_port = htons(portudp);
 	servaddr.sin_addr.s_addr = INADDR_ANY;
 		
-	int n, len;
+	int n;
+	socklen_t len;
 		
 	sendto(sockfd, (const char *)msg_buffer, strlen(msg_buffer),MSG_CONFIRM, (const struct sockaddr *) &servaddr,sizeof(servaddr)); //SYN
 	printf("SYN sent.\n");
@@ -69,7 +70,7 @@ int main(int argc, char* argv[]) {
 
 	//Receving the file
 	FILE* file = NULL;
-	int readsize = 1024;
+	int readsize = MAXLINE;
 	file = fopen("receivedfile.txt", "w");
 	while(1){
 		readsize = (int)recvfrom(newsock, (char *)buffer, sizeof(buffer), MSG_WAITALL, ( struct sockaddr *) &newservaddr, &len);

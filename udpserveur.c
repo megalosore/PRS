@@ -21,6 +21,61 @@ struct sockaddr_in addr_create(int port){ //Create local addr
     return my_addr;
 }
 
+void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t client_size){ //read and send the file to the remote host
+    //Initializing usefull variables
+    int file_counter = 0;
+    int to_send;
+    int reread = 0;
+    int remainder;
+    char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
+    char *writebuffer = malloc(BUFFER_SIZE * sizeof(char));
+
+    //getting file size
+    fseek(fd, 0, SEEK_END); 
+    int filesize = ftell(fd);
+    fseek(fd, 0, SEEK_SET); 
+    int to_read = filesize;
+
+    //sending the file
+    while (1){
+        if (MAX_FILE_BUFFER > to_read){
+            fread(file_buffer, to_read, 1, fd);
+            to_send = to_read;
+            to_read = 0;
+            reread = 0;
+        }else{
+            fread(file_buffer, MAX_FILE_BUFFER, 1, fd);
+            to_send = MAX_FILE_BUFFER;
+            to_read = to_read - MAX_FILE_BUFFER;
+            reread = 1;
+        }
+        file_counter = 0;
+        remainder = to_send;
+        while(remainder > BUFFER_SIZE){
+            printf("remainder: %i\n",remainder);
+            memset(writebuffer, 0, BUFFER_SIZE);
+            memcpy(writebuffer, file_buffer + (file_counter * BUFFER_SIZE), BUFFER_SIZE);
+            sendto(sock, writebuffer, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
+            file_counter++;
+            remainder = remainder - BUFFER_SIZE;
+        }
+        if (remainder != 0){
+            printf("remainder: %i\n",remainder);
+            memset(writebuffer, 0, BUFFER_SIZE);
+            memcpy(writebuffer, file_buffer + (file_counter * BUFFER_SIZE), remainder);
+            sendto(sock, writebuffer, remainder, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
+            remainder = 0;
+        }
+        if(reread == 0){
+            break;
+        }
+    }
+    sendto(sock, "STOP", BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
+    printf("Finished\n");
+    free(writebuffer);
+    free(file_buffer);
+}
+
 int main(int argc, char* argv[]){
     //Checking args
     if (argc != 2){
@@ -28,7 +83,6 @@ int main(int argc, char* argv[]){
         exit(1);
     }
     //Initialising variables
-    char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(int));
     int port_udp = atoi(argv[1]);
     int currentport = port_udp;
     int reuse = 1;
@@ -122,56 +176,8 @@ int main(int argc, char* argv[]){
                         exit(1);
                     }
 
-                    //getting file size
+                    send_file(file, newsock, new_client_addr, new_client_taille);
 
-                    int file_counter = 0;
-                    int to_send;
-                    int reread = 0;
-                    int remainder;
-                    fseek(file, 0, SEEK_END); 
-                    int filesize = ftell(file);
-                    fseek(file, 0, SEEK_SET); 
-                    int to_read = filesize;
-
-                    //reading the file
-                    memset(file_buffer, 0, sizeof(writebuffer));
-                    memset(writebuffer, 0, sizeof(writebuffer));
-
-                    //sending the file
-                    while (1){
-                        if (MAX_FILE_BUFFER > to_read){
-                            fread(file_buffer, to_read, 1, file);
-                            to_send = to_read;
-                            to_read = 0;
-                            reread = 0;
-                        }else{
-                            fread(file_buffer, MAX_FILE_BUFFER, 1, file);
-                            to_send = MAX_FILE_BUFFER;
-                            to_read = to_read - MAX_FILE_BUFFER;
-                            reread = 1;
-                        }
-                        file_counter = 0;
-                        remainder = to_send;
-                        while(remainder > BUFFER_SIZE){
-                            printf("remainder: %i\n",remainder);
-                            memset(writebuffer, 0, BUFFER_SIZE);
-                            memcpy(writebuffer, file_buffer + (file_counter * BUFFER_SIZE), BUFFER_SIZE);
-                            sendto(newsock, writebuffer, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &new_client_addr, new_client_taille);
-                            file_counter++;
-                            remainder = remainder - BUFFER_SIZE;
-                        }
-                        if (remainder != 0){
-                            memset(writebuffer, 0, BUFFER_SIZE);
-                            memcpy(writebuffer, file_buffer + (file_counter * BUFFER_SIZE), remainder);
-                            sendto(newsock, writebuffer, remainder, MSG_CONFIRM, (const struct sockaddr *) &new_client_addr, new_client_taille);
-                            remainder = 0;
-                        }
-                        if(reread == 0){
-                            break;
-                        }
-                    }
-                    sendto(newsock, "STOP", BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &new_client_addr, new_client_taille);
-                    printf("Finished\n");
                     fclose(file);
                     close(newsock);
                     break;
