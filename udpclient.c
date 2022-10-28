@@ -47,6 +47,10 @@ int main(int argc, char* argv[]) {
 	buffer[n] = '\0';
 	printf("Server : %s and NewPort %i\n", buffer, newport);
 
+	//Sending the ACK
+	msg_buffer = "ACK";
+	sendto(sockfd, (const char *)msg_buffer, strlen(msg_buffer),MSG_CONFIRM, (const struct sockaddr *) &servaddr,sizeof(servaddr)); //ACK
+
 	//Creating new Socket
 	int newsock;
 	if ( (newsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
@@ -58,19 +62,24 @@ int main(int argc, char* argv[]) {
 	newservaddr.sin_family = AF_INET;
 	newservaddr.sin_port = htons(newport);
 	newservaddr.sin_addr.s_addr = INADDR_ANY;
-	//Sending the ACK to the new port
-	msg_buffer = "ACK";
-	sendto(newsock, (const char *)msg_buffer, strlen(msg_buffer),MSG_CONFIRM, (const struct sockaddr *) &newservaddr,sizeof(newservaddr)); //ACK
 	
+	//Asking for the file
+	msg_buffer = "file.txt";
+	sendto(newsock, (const char *)msg_buffer, strlen(msg_buffer),MSG_CONFIRM, (const struct sockaddr *) &newservaddr,sizeof(newservaddr)); //ACK
+
 	//Receving the file
 	FILE* file = NULL;
+	int readsize = 1024;
 	file = fopen("receivedfile.txt", "w");
 	while(1){
-		recvfrom(newsock, (char *)buffer, sizeof(buffer), MSG_WAITALL, ( struct sockaddr *) &newservaddr, &len);
-		if (strcmp(buffer,"STOP")){
-			fwrite(buffer, 1024 ,1 ,file);
+		readsize = (int)recvfrom(newsock, (char *)buffer, sizeof(buffer), MSG_WAITALL, ( struct sockaddr *) &newservaddr, &len);
+
+		printf("%i\n", readsize);
+		if (strncmp(buffer,"STOP",4)){
+			fwrite(buffer, readsize , 1 ,file);
 			memset(buffer, 0, sizeof(buffer));
 		}else{
+			fclose(file);
 			break;
 		}
 	}
