@@ -8,7 +8,7 @@
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#define MAX_FILE_BUFFER 150000000
+#define MAX_FILE_BUFFER 1494 * 100000 //142.48 Megabytes of memory used for the buffer
 #define BUFFER_SIZE 1500
 #define TIMEOUT_VALUE 5
 
@@ -25,52 +25,57 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     //Initializing usefull variables
     int file_counter = 0;
     int to_send;
-    int reread = 0;
+    int seq_nb = 1;
+    int reread = 1;
     int remainder;
     char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
     char *writebuffer = malloc(BUFFER_SIZE * sizeof(char));
 
     //getting file size
     fseek(fd, 0, SEEK_END); 
-    int filesize = ftell(fd);
-    fseek(fd, 0, SEEK_SET); 
-    int to_read = filesize;
+    int to_read = ftell(fd);
+    rewind(fd);
 
     //sending the file
-    while (1){
+    while(reread){
+        //Loading the file in the memory
         if (MAX_FILE_BUFFER > to_read){
+            //The whole file fit in the buffer
             fread(file_buffer, to_read, 1, fd);
             to_send = to_read;
             to_read = 0;
             reread = 0;
         }else{
+            //We need to reread the file after sending the previous part
             fread(file_buffer, MAX_FILE_BUFFER, 1, fd);
             to_send = MAX_FILE_BUFFER;
             to_read = to_read - MAX_FILE_BUFFER;
-            reread = 1;
         }
         file_counter = 0;
         remainder = to_send;
-        while(remainder > BUFFER_SIZE){
+        while(remainder > BUFFER_SIZE - 6){
+            //Sending the segments
             printf("remainder: %i\n",remainder);
             memset(writebuffer, 0, BUFFER_SIZE);
-            memcpy(writebuffer, file_buffer + (file_counter * BUFFER_SIZE), BUFFER_SIZE);
+            snprintf(writebuffer, 6, "%d", seq_nb);
+            memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), BUFFER_SIZE-6); // -6 account for the char used by the seq number
             sendto(sock, writebuffer, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
             file_counter++;
-            remainder = remainder - BUFFER_SIZE;
+            seq_nb++;
+            remainder = remainder - (BUFFER_SIZE - 6);
         }
         if (remainder != 0){
+            //sending the final segment
             printf("remainder: %i\n",remainder);
             memset(writebuffer, 0, BUFFER_SIZE);
-            memcpy(writebuffer, file_buffer + (file_counter * BUFFER_SIZE), remainder);
-            sendto(sock, writebuffer, remainder, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
-            remainder = 0;
-        }
-        if(reread == 0){
-            break;
+            snprintf(writebuffer, 6, "%d", seq_nb);
+            memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), remainder);
+            sendto(sock, writebuffer, remainder + 6, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
+            seq_nb++;
+            printf("remainder: 0\n");
         }
     }
-    sendto(sock, "STOP", BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
+    sendto(sock, "FIN", BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
     printf("Finished\n");
     free(writebuffer);
     free(file_buffer);
