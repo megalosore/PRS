@@ -72,14 +72,20 @@ int main(int argc, char* argv[]) {
 	FILE* file = NULL;
 	int readsize = MAXLINE;
 	char seq_buffer[6];
+	char ack_buffer[9];
 	file = fopen("receivedfile.txt", "w");
 	while(1){
 		readsize = (int)recvfrom(newsock, (char *)buffer, sizeof(buffer), MSG_WAITALL, ( struct sockaddr *) &newservaddr, &len);
 		strncpy(seq_buffer, buffer, 6);
 		printf("seq nb: %s | size received: %d\n", seq_buffer, readsize);
 		if (strncmp(buffer,"FIN",3)){
+			//writting the data
 			fwrite(buffer+6, readsize-6 , 1 ,file);
 			memset(buffer, 0, sizeof(buffer));
+			//sending ACK
+			memset(ack_buffer, 0, sizeof(ack_buffer));
+			snprintf(ack_buffer, 9, "ACK%s", seq_buffer);
+			sendto(newsock, (const char *)ack_buffer, sizeof(ack_buffer), MSG_CONFIRM, (const struct sockaddr *) &newservaddr,sizeof(newservaddr)); //ACK
 		}else{
 			fclose(file);
 			break;

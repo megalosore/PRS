@@ -28,8 +28,14 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int seq_nb = 1;
     int reread = 1;
     int remainder;
+    int timeout_flag;
+    //Various buffers
     char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
     char *writebuffer = malloc(BUFFER_SIZE * sizeof(char));
+    char *ackbuffer = malloc(9 * sizeof(char));
+    //Select struct with a timeout
+    fd_set select_ack;
+    struct timeval tv = {0, 0};
 
     //getting file size
     fseek(fd, 0, SEEK_END); 
@@ -55,7 +61,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         remainder = to_send;
         while(remainder > BUFFER_SIZE - 6){
             //Sending the segments
-            printf("remainder: %i\n",remainder);
+            //printf("remainder: %i\n",remainder);
             memset(writebuffer, 0, BUFFER_SIZE);
             snprintf(writebuffer, 6, "%d", seq_nb);
             memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), BUFFER_SIZE-6); // -6 account for the char used by the seq number
@@ -63,22 +69,49 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             file_counter++;
             seq_nb++;
             remainder = remainder - (BUFFER_SIZE - 6);
+            //Waiting for ack
+            memset(ackbuffer, 0, 9);
+            FD_ZERO(&select_ack);
+            FD_SET(sock, &select_ack);
+            tv.tv_sec = TIMEOUT_VALUE; //change this for a variable based on the round-trip time of the handshake
+            timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv);
+            if(!timeout_flag){
+                printf("Timeout: No ACK Received for seq %d\n",seq_nb);
+                //placeholder
+            }
+            else{ 
+                recv(sock, ackbuffer, sizeof(ackbuffer), MSG_WAITALL);
+                printf("%s\n", ackbuffer);
+            }
         }
         if (remainder != 0){
             //sending the final segment
-            printf("remainder: %i\n",remainder);
+            //printf("remainder: %i\n",remainder);
             memset(writebuffer, 0, BUFFER_SIZE);
             snprintf(writebuffer, 6, "%d", seq_nb);
             memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), remainder);
             sendto(sock, writebuffer, remainder + 6, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
             seq_nb++;
-            printf("remainder: 0\n");
+            //Waiting for ack
+            memset(ackbuffer, 0, 9);
+            FD_ZERO(&select_ack);
+            FD_SET(sock, &select_ack);
+            tv.tv_sec = TIMEOUT_VALUE;
+            timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv);
+            if(!timeout_flag){
+                printf("Timeout: No ACK Received for seq %d\n",seq_nb);
+                //placeholder
+            }else{
+                recv(sock, ackbuffer, sizeof(ackbuffer), MSG_WAITALL);
+                printf("%s\n", ackbuffer);
+            }
         }
     }
     sendto(sock, "FIN", BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
     printf("Finished\n");
     free(writebuffer);
     free(file_buffer);
+    free(ackbuffer);
 }
 
 int main(int argc, char* argv[]){
@@ -101,8 +134,7 @@ int main(int argc, char* argv[]){
     struct timeval tv;                          //Preparing a timeout
     tv.tv_sec = TIMEOUT_VALUE;
     tv.tv_usec = 0;
-    fd_set fd_select;                           //Create the select struct
-    fd_set fs_newselect;
+    fd_set fd_select;
 
     //Checking socket
     if (udpsock < 0){
