@@ -21,7 +21,7 @@ struct sockaddr_in addr_create(int port){ //Create local addr
     return my_addr;
 }
 
-void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t client_size){ //read and send the file to the remote host
+void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t client_size, time_t rtt){ //read and send the file to the remote host
     //Initializing usefull variables
     int file_counter = 0;
     int to_send;
@@ -35,7 +35,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     char *ackbuffer = malloc(9 * sizeof(char));
     //Select struct with a timeout
     fd_set select_ack;
-    struct timeval tv = {0, 0};
+    struct timeval tv = {0, 2*rtt}; //2 time the round trip measured just to be safe
 
     //getting file size
     fseek(fd, 0, SEEK_END); 
@@ -73,7 +73,8 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             memset(ackbuffer, 0, 9);
             FD_ZERO(&select_ack);
             FD_SET(sock, &select_ack);
-            tv.tv_sec = TIMEOUT_VALUE; //change this for a variable based on the round-trip time of the handshake
+            tv.tv_sec = 0;
+            tv.tv_usec = 2*rtt;
             timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv);
             if(!timeout_flag){
                 printf("Timeout: No ACK Received for seq %d\n",seq_nb);
@@ -86,7 +87,6 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         }
         if (remainder != 0){
             //sending the final segment
-            //printf("remainder: %i\n",remainder);
             memset(writebuffer, 0, BUFFER_SIZE);
             snprintf(writebuffer, 6, "%d", seq_nb);
             memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), remainder);
@@ -96,7 +96,8 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             memset(ackbuffer, 0, 9);
             FD_ZERO(&select_ack);
             FD_SET(sock, &select_ack);
-            tv.tv_sec = TIMEOUT_VALUE;
+            tv.tv_sec = 0;
+            tv.tv_usec = 2*rtt;
             timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv);
             if(!timeout_flag){
                 printf("Timeout: No ACK Received for seq %d\n",seq_nb);
@@ -107,7 +108,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             }
         }
     }
-    sendto(sock, "FIN", BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
+    sendto(sock, "FIN", 3, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
     printf("Finished\n");
     free(writebuffer);
     free(file_buffer);
@@ -131,9 +132,6 @@ int main(int argc, char* argv[]){
     socklen_t client_taille = (socklen_t)sizeof(client_addr);
     struct sockaddr_in new_client_addr;             //Create the struct to store the client connection info
     socklen_t new_client_taille = (socklen_t)sizeof(new_client_addr);
-    struct timeval tv;                          //Preparing a timeout
-    tv.tv_sec = TIMEOUT_VALUE;
-    tv.tv_usec = 0;
     fd_set fd_select;
 
     //Checking socket
@@ -164,6 +162,7 @@ int main(int argc, char* argv[]){
             }else{
                 printf("SYN Received\n");
                 currentport++;
+
                 //Create the new Socket
                 int newsock;
 	            if ( (newsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
@@ -175,22 +174,28 @@ int main(int argc, char* argv[]){
                 //Sending the ACK and the port
                 memset(writebuffer, 0, sizeof(writebuffer));
                 snprintf(writebuffer, sizeof(writebuffer), "SYN-ACK %i", currentport);
+                
+                struct timeval tv = {TIMEOUT_VALUE, 0};                 //Prepare a timeout
+                struct timeval start, end;                              //Mesure RTT
+                gettimeofday(&start, NULL);
                 sendto(udpsock, writebuffer, sizeof(writebuffer), MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_taille);
                 printf("SYN-ACK XXXX Sent\n");
                 //reseting the select
                 FD_ZERO(&fd_select);
                 FD_SET(udpsock, &fd_select);
-                //Waiting for ACK
 
+                //Waiting for ACK
                 int timeout = select(port_udp+1, &fd_select, NULL, NULL, &tv);
                 if (timeout == -1){
                     printf("Select error line 89\n");
-                    exit(1);
+                    break;
                 }
                 else if (timeout == 0){
                     printf("ACK timeout\n");
                     break;
                 }else{
+                    gettimeofday(&end, NULL);
+                    time_t rtt = (end.tv_sec - start.tv_sec) * 1000000 + end.tv_usec - start.tv_usec;
                     memset(udpreadbuffer, 0, sizeof(udpreadbuffer));
                     recvfrom(udpsock, (char *)udpreadbuffer, sizeof(udpreadbuffer), MSG_WAITALL, ( struct sockaddr *) &client_addr, &client_taille);
                     if (strncmp(udpreadbuffer,"ACK",3)){
@@ -198,7 +203,7 @@ int main(int argc, char* argv[]){
                         exit(1);
                     }
 
-                    printf("3 way handhsake completed\n");
+                    printf("3 way handhsake completed| RTT is %ld us\n", rtt);
                     memset(udpreadbuffer, 0, sizeof(udpreadbuffer));
                     //Waiting for the filename
                     recvfrom(newsock, (char *)udpreadbuffer, sizeof(udpreadbuffer), MSG_WAITALL, ( struct sockaddr *) &new_client_addr, &new_client_taille);
@@ -210,14 +215,13 @@ int main(int argc, char* argv[]){
 
                     if (file == NULL){
                         printf("File does not exist ERROR\n");
-                        exit(1);
+                        break;
                     }
 
-                    send_file(file, newsock, new_client_addr, new_client_taille);
+                    send_file(file, newsock, new_client_addr, new_client_taille, rtt);
 
                     fclose(file);
                     close(newsock);
-                    break;
                 }
             }
         }
