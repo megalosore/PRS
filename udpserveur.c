@@ -8,8 +8,8 @@
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#define MAX_FILE_BUFFER 1494 * 100000 //142.48 Megabytes of memory used for the buffer
-#define BUFFER_SIZE 1500
+#define MAX_FILE_BUFFER 1493 * 100000 //142.48 Megabytes of memory used for the buffer
+#define BUFFER_SIZE 150000
 #define TIMEOUT_VALUE 5
 
 struct sockaddr_in addr_create(int port){ //Create local addr
@@ -35,7 +35,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     char *ackbuffer = malloc(9 * sizeof(char));
     //Select struct with a timeout
     fd_set select_ack;
-    struct timeval tv = {0, 2*rtt}; //2 time the round trip measured just to be safe
+    struct timeval tv = {0, 5*rtt}; //2 time the round trip measured just to be safe
 
     //getting file size
     fseek(fd, 0, SEEK_END); 
@@ -59,22 +59,22 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         }
         file_counter = 0;
         remainder = to_send;
-        while(remainder > BUFFER_SIZE - 6){
+        while(remainder > BUFFER_SIZE - 7){
             //Sending the segments
             //printf("remainder: %i\n",remainder);
             memset(writebuffer, 0, BUFFER_SIZE);
-            snprintf(writebuffer, 6, "%d", seq_nb);
-            memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), BUFFER_SIZE-6); // -6 account for the char used by the seq number
+            snprintf(writebuffer, 7, "%d", seq_nb);
+            memcpy(writebuffer + 7, file_buffer + (file_counter * (BUFFER_SIZE-7)), BUFFER_SIZE-7); // -7 account for the char used by the seq number
             sendto(sock, writebuffer, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
             file_counter++;
             seq_nb++;
-            remainder = remainder - (BUFFER_SIZE - 6);
+            remainder = remainder - (BUFFER_SIZE - 7);
             //Waiting for ack
-            memset(ackbuffer, 0, 9);
+            memset(ackbuffer, 0, 10);
             FD_ZERO(&select_ack);
             FD_SET(sock, &select_ack);
             tv.tv_sec = 0;
-            tv.tv_usec = 2*rtt;
+            tv.tv_usec = 5*rtt;
             timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv);
             if(!timeout_flag){
                 printf("Timeout: No ACK Received for seq %d\n",seq_nb);
@@ -88,16 +88,16 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         if (remainder != 0){
             //sending the final segment
             memset(writebuffer, 0, BUFFER_SIZE);
-            snprintf(writebuffer, 6, "%d", seq_nb);
-            memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), remainder);
-            sendto(sock, writebuffer, remainder + 6, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
+            snprintf(writebuffer, 7, "%d", seq_nb);
+            memcpy(writebuffer + 7, file_buffer + (file_counter * (BUFFER_SIZE-7)), remainder);
+            sendto(sock, writebuffer, remainder + 7, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
             seq_nb++;
             //Waiting for ack
-            memset(ackbuffer, 0, 9);
+            memset(ackbuffer, 0, 10);
             FD_ZERO(&select_ack);
             FD_SET(sock, &select_ack);
             tv.tv_sec = 0;
-            tv.tv_usec = 2*rtt;
+            tv.tv_usec = 5*rtt;
             timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv);
             if(!timeout_flag){
                 printf("Timeout: No ACK Received for seq %d\n",seq_nb);
@@ -173,7 +173,7 @@ int main(int argc, char* argv[]){
                 bind(newsock, (struct sockaddr *)&newservaddr, sizeof(newservaddr));
                 //Sending the ACK and the port
                 memset(writebuffer, 0, sizeof(writebuffer));
-                snprintf(writebuffer, sizeof(writebuffer), "SYN-ACK %i", currentport);
+                snprintf(writebuffer, sizeof(writebuffer), "SYN-ACK%i", currentport);
                 
                 struct timeval tv = {TIMEOUT_VALUE, 0};                 //Prepare a timeout
                 struct timeval start, end;                              //Mesure RTT

@@ -1,7 +1,4 @@
-all: udpserveur udpclient
+all: udpserveur
 
 udpserveur: udpserveur.c
 	gcc -Wall udpserveur.c -o udpserveur
-	
-udpclient: udpclient.c
-	gcc -Wall udpclient.c -o udpclient
