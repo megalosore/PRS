@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -23,13 +24,6 @@ struct sockaddr_in addr_create(int port){ //Create local addr
 
 void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, time_t rtt, int *segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
             int file_counter = (*segmentNumber-1)%100000;
-            int timeout_flag;
-
-            struct timeval tv = {0, 20*rtt};//20 time the round trip measured just to be safe
-            //Select struct with a timeout
-            fd_set select_ack;
-            FD_ZERO(&select_ack);
-            FD_SET(sock, &select_ack);
 
             memset(writebuffer, 0, BUFFER_SIZE);
             snprintf(writebuffer, 7, "%d", *segmentNumber);
@@ -38,29 +32,52 @@ void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t cli
 
             sendto(sock, writebuffer, msgSize, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
             *remainder = *remainder - (msgSize - 6);
-            //Waiting for ack
-            memset(ackbuffer, 0, 10);
-            
-            timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv);
-            if(!timeout_flag){//timed out 
-                printf("Timeout: No ACK Received for seq %d\n",*segmentNumber);
-                //placeholder
+}
+
+int checkAck(int sock,time_t rtt, int windowSize, int segmentNumber){
+    //Return the new value that segmentNumber should take
+    struct timeval tv = {0, 8000 + rtt};//20 time the round trip measured just to be safe
+    int timeout_flag;
+    char ackbuffer[10];
+    int duplicateAck[2];
+    duplicateAck[0] = segmentNumber - windowSize; //The number of the ack we are waiting for
+    duplicateAck[1] = 0;                           //Number of duplicate ack
+    fd_set select_ack;
+
+    for (int i=1; i<windowSize; i++){
+        memset(ackbuffer, 0, 10);
+        FD_ZERO(&select_ack);
+        FD_SET(sock, &select_ack);
+        timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv); //wait for an ack
+
+        if(!timeout_flag){//retransmit after time out 
+            printf("Timeout: No ACK Received for seq %d\n",segmentNumber);
+            return duplicateAck[0]+1;
+        }
+        else{ //ACK received
+            recv(sock, ackbuffer, sizeof(ackbuffer)+1, MSG_WAITALL);
+            //Extract the ackNum
+            char strACKNum[7];
+            memcpy(strACKNum, ackbuffer+3,7);
+            int ackNum = atoi(strACKNum);
+            printf("received ACK%i\n", ackNum);
+
+            if (duplicateAck[0] == ackNum){ //If we receive an already received ack do ++
+                duplicateAck[1] += 1;
+            }else if (duplicateAck[0] < ackNum){ //If we receive a Higher ACK update the num
+                    duplicateAck[0] = ackNum;
+                    duplicateAck[1] = 1;
+            }else if ((duplicateAck[1] == 0) && (duplicateAck[0] > ackNum)){// If the ack is smaller just ignore
+                    duplicateAck[0] = ackNum;
+                    duplicateAck[1] = 1;
             }
-            else{ //ACK received
-                recvfrom(sock, ackbuffer, sizeof(ackbuffer)+1, MSG_WAITALL,(struct sockaddr *) &client_addr, &client_size);
-                //Extract the ackNum
-                char strACKNum[7];
-                memcpy(strACKNum, ackbuffer+3,7);
-                int ackNum = atoi(strACKNum);
-                printf("received ACK%i\n", ackNum);
-                if (ackNum!=*segmentNumber){//comparing the ackNumber to the message sent and doing what has to be done
-                    printf("ACK : %i  | SEQNUM : %i  |remainder %i \n  Sending again...\n", ackNum, *segmentNumber,*remainder);
-                    *remainder = *remainder -  (ackNum-(*segmentNumber))*(msgSize - 6);
-                    *segmentNumber=ackNum;
-                    printf("newSeqNumber %d| new remainder%d\n",*segmentNumber,*remainder);
-                }
-                
-            }
+        }
+        if (duplicateAck[1] >= 3){ //retransmit after 3 duplicate
+            printf("Duplicate: Three duplicate ACK Received for seq %d\n",duplicateAck[0]);
+            return duplicateAck[0]+1;
+        }
+    }
+    return duplicateAck[0]+1; // If no duplicate send back the last ack received 
 }
 
 void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t client_size, time_t rtt){ //read and send the file to the remote host
@@ -69,8 +86,9 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int seq_nb = 1;
     int reread = 1;
     int remainder;
-    int windowSize=20;
-    int packetSent = 0;
+    int lastRemainder;
+    int windowSize=100; //Every value are possible 
+    int lastAck = 0;
 
     //Various buffers
     char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
@@ -100,30 +118,57 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         //file_counter = 0;
         remainder = to_send;
         while(remainder != 0){
-            while(remainder > BUFFER_SIZE - 6){
-            //    if packetSent<windowSize {
+            while(remainder > windowSize*(BUFFER_SIZE - 6)){
+                for (int i=0; i<windowSize; i++){
                     sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
-                    packetSent++;
-            //    }
+                }
+                lastAck = checkAck(sock, rtt, windowSize, seq_nb);
+                remainder += (seq_nb - lastAck)*(BUFFER_SIZE - 6);
+                seq_nb = lastAck;
+                printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
+
             }
-            if (remainder > 0 && remainder < BUFFER_SIZE - 6){
-             //   if packetSent<windowSize {
-                    sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
-                    seq_nb++;
-                    packetSent++;
-              //  }
+            if ((remainder > 0) && (remainder < windowSize*(BUFFER_SIZE - 6))){
+                for (int i=0; i<windowSize; i++){
+                    if (remainder > BUFFER_SIZE - 6){
+                        sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                        seq_nb++;
+                    }else{
+                        lastRemainder = remainder;
+                        sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
+                        break;
+                    }
+                }
+                lastAck = checkAck(sock, rtt, windowSize, seq_nb);
+                //printf("%d %d\n",lastAck,seq_nb);
+                if (lastAck < seq_nb){
+                    if (remainder == 0){
+                        remainder += lastRemainder;
+                        seq_nb -= 1;
+                    }
+                    printf("%d %d\n",seq_nb, lastAck);
+                    remainder += (seq_nb - (lastAck-1))*(BUFFER_SIZE-6);
+                }
+                seq_nb = lastAck;
+                printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
+                //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
             }
         }
     }
 
-    sendto(sock, "FIN", 3, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
+    for (int i=0;i<100;i++){ //FUCCKKKKKKKK STOP YOU DAMNIT
+        //printf("FIN\n");
+        sendto(sock, "FIN", 3, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
+    }
     printf("Finished\n");
     free(writebuffer);
     free(file_buffer);
     free(ackbuffer);
+    sleep(1);
+    sendto(sock, "FIN", 3, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
+    //I WILL MAKE YOU STOP IF YOU DIDNT (Do not remove the client is DUMB)
 }
-
 
 int main(int argc, char* argv[]){
     //Checking args
