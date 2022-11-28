@@ -37,7 +37,7 @@ void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t cli
 
 
             sendto(sock, writebuffer, msgSize, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
-            *remainder = *remainder - (BUFFER_SIZE - 6);
+            *remainder = *remainder - (msgSize - 6);
             //Waiting for ack
             memset(ackbuffer, 0, 10);
             
@@ -55,7 +55,7 @@ void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t cli
                 printf("received ACK%i\n", ackNum);
                 if (ackNum!=*segmentNumber){//comparing the ackNumber to the message sent and doing what has to be done
                     printf("ACK : %i  | SEQNUM : %i  |remainder %i \n  Sending again...\n", ackNum, *segmentNumber,*remainder);
-                    *remainder = *remainder -  (ackNum-(*segmentNumber))*(BUFFER_SIZE - 6);
+                    *remainder = *remainder -  (ackNum-(*segmentNumber))*(msgSize - 6);
                     *segmentNumber=ackNum;
                     printf("newSeqNumber %d| new remainder%d\n",*segmentNumber,*remainder);
                 }
@@ -69,6 +69,9 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int seq_nb = 1;
     int reread = 1;
     int remainder;
+    int windowSize=20;
+    int packetSent = 0;
+
     //Various buffers
     char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
     char *writebuffer = malloc(BUFFER_SIZE * sizeof(char));
@@ -96,13 +99,21 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         }
         //file_counter = 0;
         remainder = to_send;
-        while(remainder > BUFFER_SIZE - 6){
-            sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
-            seq_nb++;
-        }
-        if (remainder != 0){
-            sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
-            seq_nb++;
+        while(remainder != 0){
+            while(remainder > BUFFER_SIZE - 6){
+            //    if packetSent<windowSize {
+                    sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                    seq_nb++;
+                    packetSent++;
+            //    }
+            }
+            if (remainder > 0 && remainder < BUFFER_SIZE - 6){
+             //   if packetSent<windowSize {
+                    sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
+                    seq_nb++;
+                    packetSent++;
+              //  }
+            }
         }
     }
 
