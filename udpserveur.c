@@ -87,16 +87,18 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int lastRemainder;
     int windowSize=100; //Every value are possible 
     int lastAck = 0;
-
+    
     //Various buffers
     char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
     char *writebuffer = malloc(BUFFER_SIZE * sizeof(char));
     char *ackbuffer = malloc(10 * sizeof(char));
 
     //getting file size
+    printf("here2\n");
     fseek(fd, 0, SEEK_END); 
     int to_read = ftell(fd);
     rewind(fd);
+    printf("here3\n");
     //sending the file
         //sending the file
     while(reread){
@@ -122,8 +124,9 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                     seq_nb++;
                 }
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
-                remainder += (seq_nb - lastAck)*(BUFFER_SIZE - 6);
-                seq_nb = lastAck;
+                printf("here5\n");
+                remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
+                seq_nb = lastAck+1;
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
 
             }
@@ -139,6 +142,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                     }
                 }
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
+                printf("here6\n");
                 //printf("%d %d\n",lastAck,seq_nb);
                 if (lastAck < seq_nb){
                     if (remainder == 0){
@@ -154,7 +158,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             }
         }
     }
-    
+    printf("here4\n");
     for (int i=0;i<100;i++){ //FUCCKKKKKKKK STOP YOU DAMNIT
         //printf("FIN\n");
         sendto(sock, "FIN", 3, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
@@ -265,7 +269,7 @@ int main(int argc, char* argv[]){
                     //Preparing the file
                     FILE* file = NULL;
                     file = fopen(udpreadbuffer, "r");
-
+                    printf("here1\n");
                     if (file == NULL){
                         printf("File does not exist ERROR\n");
                         break;
