@@ -22,28 +22,26 @@ struct sockaddr_in addr_create(int port){ //Create local addr
     return my_addr;
 }
 
-void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, time_t rtt, int *segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
+void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int *segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
             int file_counter = (*segmentNumber-1)%100000;
 
             memset(writebuffer, 0, BUFFER_SIZE);
+            
             snprintf(writebuffer, 7, "%d", *segmentNumber);
             memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), msgSize-6); // -6 account for the char used by the seq number
-
-
             sendto(sock, writebuffer, msgSize, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
             *remainder = *remainder - (msgSize - 6);
 }
 
-int checkAck(int sock,time_t rtt, int windowSize, int segmentNumber){
+int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
     //Return the new value that segmentNumber should take;
     struct timeval tv = {0, 8000 + rtt};//20 time the round trip measured just to be safe
     int timeout_flag;
     char ackbuffer[10];
     int duplicateAck[2];
-    duplicateAck[0] = segmentNumber - windowSize; //The number of the ack we are waiting for
+    duplicateAck[0] = lastAck; //The number of the ack we are waiting for
     duplicateAck[1] = 0;                           //Number of duplicate ack
     fd_set select_ack;
-
     for (int i=1; i<windowSize; i++){
         memset(ackbuffer, 0, 10);
         FD_ZERO(&select_ack);
@@ -52,7 +50,7 @@ int checkAck(int sock,time_t rtt, int windowSize, int segmentNumber){
 
         if(!timeout_flag){//retransmit after time out 
             //printf("Timeout: No ACK Received for seq %d\n",segmentNumber);
-            return duplicateAck[0]+1;
+            return duplicateAck[0];
         }
         else{ //ACK received
             recv(sock, ackbuffer, sizeof(ackbuffer)+1, MSG_WAITALL);
@@ -60,7 +58,7 @@ int checkAck(int sock,time_t rtt, int windowSize, int segmentNumber){
             char strACKNum[7];
             memcpy(strACKNum, ackbuffer+3,7);
             int ackNum = atoi(strACKNum);
-            //printf("received ACK%i\n", ackNum);
+            printf("received ACK%i\n", ackNum);
 
             if (duplicateAck[0] == ackNum){ //If we receive an already received ack do ++
                 duplicateAck[1] += 1;
@@ -74,10 +72,10 @@ int checkAck(int sock,time_t rtt, int windowSize, int segmentNumber){
         }
         if (duplicateAck[1] >= 9){ //retransmit after 3 duplicate
             //printf("Duplicate: Three duplicate ACK Received for seq %d\n",duplicateAck[0]);
-            return duplicateAck[0]+1;
+            return duplicateAck[0];
         }
     }
-    return duplicateAck[0]+1; // If no duplicate send back the last ack received 
+    return duplicateAck[0]; // If no duplicate send back the last ack received 
 }
 
 void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t client_size, time_t rtt){ //read and send the file to the remote host
@@ -99,8 +97,8 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     fseek(fd, 0, SEEK_END); 
     int to_read = ftell(fd);
     rewind(fd);
-
     //sending the file
+        //sending the file
     while(reread){
         //Loading the file in the memory
         if (MAX_FILE_BUFFER > to_read){
@@ -120,10 +118,10 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         while(remainder != 0){
             while(remainder > windowSize*(BUFFER_SIZE - 6)){
                 for (int i=0; i<windowSize; i++){
-                    sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                    sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
                 }
-                lastAck = checkAck(sock, rtt, windowSize, seq_nb);
+                lastAck = checkAck(sock, rtt, windowSize, lastAck);
                 remainder += (seq_nb - lastAck)*(BUFFER_SIZE - 6);
                 seq_nb = lastAck;
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
@@ -132,15 +130,15 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             if ((remainder > 0) && (remainder < windowSize*(BUFFER_SIZE - 6))){
                 for (int i=0; i<windowSize; i++){
                     if (remainder > BUFFER_SIZE - 6){
-                        sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                        sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                         seq_nb++;
                     }else{
                         lastRemainder = remainder;
-                        sendSegmentByNumber(sock,client_addr,client_size,rtt, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
+                        sendSegmentByNumber(sock,client_addr,client_size,&seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
                         break;
                     }
                 }
-                lastAck = checkAck(sock, rtt, windowSize, seq_nb);
+                lastAck = checkAck(sock, rtt, windowSize, lastAck);
                 //printf("%d %d\n",lastAck,seq_nb);
                 if (lastAck < seq_nb){
                     if (remainder == 0){
@@ -156,7 +154,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             }
         }
     }
-
+    
     for (int i=0;i<100;i++){ //FUCCKKKKKKKK STOP YOU DAMNIT
         //printf("FIN\n");
         sendto(sock, "FIN", 3, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
