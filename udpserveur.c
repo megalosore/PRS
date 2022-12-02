@@ -24,9 +24,7 @@ struct sockaddr_in addr_create(int port){ //Create local addr
 
 void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int *segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
             int file_counter = (*segmentNumber-1)%100000;
-
             memset(writebuffer, 0, BUFFER_SIZE);
-            
             snprintf(writebuffer, 7, "%d", *segmentNumber);
             memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), msgSize-6); // -6 account for the char used by the seq number
             sendto(sock, writebuffer, msgSize, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
@@ -81,7 +79,7 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
 void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t client_size, time_t rtt){ //read and send the file to the remote host
     //Initializing usefull variables
     int to_send;
-    int seq_nb = 1;
+    int seq_nb = 0;
     int reread = 1;
     int remainder;
     int lastRemainder;
@@ -94,14 +92,13 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     char *ackbuffer = malloc(10 * sizeof(char));
 
     //getting file size
-    printf("here2\n");
     fseek(fd, 0, SEEK_END); 
     int to_read = ftell(fd);
     rewind(fd);
-    printf("here3\n");
     //sending the file
         //sending the file
     while(reread){
+        seq_nb++;
         //Loading the file in the memory
         if (MAX_FILE_BUFFER > to_read){
             //The whole file fit in the buffer
@@ -124,13 +121,12 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                     seq_nb++;
                 }
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
-                printf("here5\n");
                 remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
                 seq_nb = lastAck+1;
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
 
             }
-            if ((remainder > 0) && (remainder < windowSize*(BUFFER_SIZE - 6))){
+            if ((remainder > 0) && (remainder <= windowSize*(BUFFER_SIZE - 6))){
                 for (int i=0; i<windowSize; i++){
                     if (remainder > BUFFER_SIZE - 6){
                         sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
@@ -142,8 +138,8 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                     }
                 }
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
-                printf("here6\n");
                 //printf("%d %d\n",lastAck,seq_nb);
+                ///printf("Seq nb : %d, remainder: %d lastAck %d \n", seq_nb, remainder , lastAck);
                 if (lastAck < seq_nb){
                     if (remainder == 0){
                         remainder += lastRemainder;
@@ -153,12 +149,12 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                     remainder += (seq_nb - (lastAck-1))*(BUFFER_SIZE-6);
                 }
                 seq_nb = lastAck;
-                //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
+                //printf("new Seq nb : %d, remainder: %d lastAck %d \n", seq_nb, remainder , lastAck);
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
             }
         }
     }
-    printf("here4\n");
+
     for (int i=0;i<100;i++){ //FUCCKKKKKKKK STOP YOU DAMNIT
         //printf("FIN\n");
         sendto(sock, "FIN", 3, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
