@@ -11,7 +11,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
-#define MAX_FILE_BUFFER 1466 * 100000 //142.48 Megabytes of memory used for the buffer
+#define MAX_FILE_BUFFER 1466 * 5000//100000 //142.48 Megabytes of memory used for the buffer  
 #define BUFFER_SIZE 1472
 #define TIMEOUT_VALUE 5
 
@@ -28,25 +28,26 @@ struct fileForMultiThreading{
     int* to_read;
     int* to_send;
     FILE* fd;
+    int bufferPartToRefill;
 };
 
 void *myRefillThread(void *data){
     struct fileForMultiThreading *fiinfo = data;
-        if (MAX_FILE_BUFFER > *((*fiinfo).to_read)){
+        if (MAX_FILE_BUFFER/2 > *((*fiinfo).to_read)){
             //The whole file fit in the buffer
-            fread((*fiinfo).file_buffer, *((*fiinfo).to_read), 1, (*fiinfo).fd);
+            fread((*fiinfo).file_buffer+((*fiinfo).bufferPartToRefill)*MAX_FILE_BUFFER/2, *((*fiinfo).to_read), 1, (*fiinfo).fd);
             *((*fiinfo).to_send) = *((*fiinfo).to_read);
             *((*fiinfo).to_read) = 0;
         }else{
             //We need to reread the file after sending the previous part
-            fread((*fiinfo).file_buffer, MAX_FILE_BUFFER, 1, (*fiinfo).fd);
-            *((*fiinfo).to_send) = MAX_FILE_BUFFER;
-            *((*fiinfo).to_read) = *((*fiinfo).to_read) - MAX_FILE_BUFFER;
+            fread((*fiinfo).file_buffer+((*fiinfo).bufferPartToRefill)*MAX_FILE_BUFFER/2, MAX_FILE_BUFFER/2, 1, (*fiinfo).fd);
+            *((*fiinfo).to_send) = MAX_FILE_BUFFER/2;
+            *((*fiinfo).to_read) = *((*fiinfo).to_read) - MAX_FILE_BUFFER/2;
         }
     return(0);
 }     
 void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int *segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
-            int file_counter = (*segmentNumber-1)%100000;
+            int file_counter = (*segmentNumber-1)%5000;//100000;//
             memset(writebuffer, 0, BUFFER_SIZE);
             snprintf(writebuffer, 7, "%d", *segmentNumber);
             memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), msgSize-6); // -6 account for the char used by the seq number
@@ -100,7 +101,7 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
 }
 
 void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t client_size, time_t rtt){ //read and send the file to the remote host
-    //Initializing usefull variables
+    //Initializing usefull variables 
     int to_send;
     int seq_nb = 0;
     int remainder;
@@ -119,20 +120,26 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     rewind(fd);
     //sending the file
         //sending the file
-
+    int newto_read= to_read;
     struct fileForMultiThreading multiThreadingArgs;
     
     multiThreadingArgs.file_buffer=file_buffer;
-    multiThreadingArgs.to_read = &to_read;
+    multiThreadingArgs.to_read = &newto_read;
     multiThreadingArgs.to_send= &to_send;
     multiThreadingArgs.fd=fd;
+    multiThreadingArgs.bufferPartToRefill=0;
 
 
-    while(to_read!=0){
+    pthread_t thread_id;
+    pthread_create(&thread_id, NULL, myRefillThread, &multiThreadingArgs);
+    pthread_join(thread_id, NULL);
+    /*if (multiThreadingArgs.bufferPartToRefill==0)multiThreadingArgs.bufferPartToRefill=1;
+        else multiThreadingArgs.bufferPartToRefill=0;*/
+    do{
         seq_nb++;
-        pthread_t thread_id;
-        pthread_create(&thread_id, NULL, myRefillThread, &multiThreadingArgs);
-        pthread_join(thread_id, NULL);
+
+        if (multiThreadingArgs.bufferPartToRefill==0)multiThreadingArgs.bufferPartToRefill=1;
+        else multiThreadingArgs.bufferPartToRefill=0;
         //Loading the file in the memory
         /*if (MAX_FILE_BUFFER > to_read){
             //The whole file fit in the buffer
@@ -147,7 +154,12 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             to_read = to_read - MAX_FILE_BUFFER;
         }*/
         //file_counter = 0;
+        to_read=newto_read;
         remainder = to_send;
+        printf("to_read : %d, to_send: %d\n", to_read, to_send);
+        pthread_create(&thread_id, NULL, myRefillThread, &multiThreadingArgs); 
+        
+
         while(remainder != 0){
             while(remainder > windowSize*(BUFFER_SIZE - 6)){
                 for (int i=0; i<windowSize; i++){
@@ -157,9 +169,10 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
                 remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
                 seq_nb = lastAck+1;
-                //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
+                
 
             }
+            printf("to_read 1: %d\n", to_read);
             if ((remainder > 0) && (remainder <= windowSize*(BUFFER_SIZE - 6))){
                 for (int i=0; i<windowSize; i++){
                     if (remainder > BUFFER_SIZE - 6){
@@ -187,7 +200,10 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
             }
         }
-    }
+        pthread_join(thread_id, NULL);
+        printf("New to_read : %d, to_send: %d\n", to_read, to_send);
+      
+    }while(to_read!=0);
 
     for (int i=0;i<100;i++){ //FUCCKKKKKKKK STOP YOU DAMNIT
         //printf("FIN\n");
