@@ -32,16 +32,16 @@ void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t cli
             *remainder = *remainder - (msgSize - 6);
 }
 
-int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
+int checkAck(int sock,time_t rtt, int windowSize, int lastAck,int *timeouted){
     //Return the new value that segmentNumber should take;
-    struct timeval tv = {0, 8000 + rtt};//20 time the round trip measured just to be safe
+    struct timeval tv = {0, 21670 + 3*rtt};//20 time the round trip measured just to be safe
     int timeout_flag;
     char ackbuffer[10];
     int duplicateAck[2];
     duplicateAck[0] = lastAck; //The number of the ack we are waiting for
     duplicateAck[1] = 0;                           //Number of duplicate ack
     fd_set select_ack;
-    for (int i=0; i<windowSize; i++){
+    while(duplicateAck[0] < lastAck+windowSize){
         memset(ackbuffer, 0, 10);
         FD_ZERO(&select_ack);
         FD_SET(sock, &select_ack);
@@ -49,6 +49,7 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
 
         if(!timeout_flag){//retransmit after time out 
             //printf("Timeout: No ACK Received for seq\n");
+	    *timeouted = 1;
             return duplicateAck[0];
         }
         else{ //ACK received
@@ -69,11 +70,12 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
                     duplicateAck[1] = 1;
             }
         }
-        if (duplicateAck[1] >= 3){ //retransmit after 3 duplicate
+        if (duplicateAck[1] >= 9){ //retransmit after 3 duplicate
             //printf("Duplicate: Three duplicate ACK Received for seq %d\n",duplicateAck[0]);
             return duplicateAck[0];
         }
     }
+    //printf("Successful RTT\n");
     return duplicateAck[0]; // If no duplicate send back the last ack received 
 }
 
@@ -84,9 +86,9 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int reread = 1;
     int remainder;
     int lastRemainder;
-    int windowSize=1; //Every value are possible
+    int windowSize=20; //Every value are possible
     int lastAck = 0;
-    int tmp = 0;
+    int timeouted = 0;
     //Various buffers
     char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
     char *writebuffer = malloc(BUFFER_SIZE * sizeof(char));
@@ -121,17 +123,16 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                     sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
                 }
-		tmp = lastAck;
-                lastAck = checkAck(sock, rtt, windowSize, lastAck);
-		if (lastAck == tmp){ //Timeouted, but we know that the client does not drop ACK, then do not lower the window
-		    windowSize = windowSize;
+                lastAck = checkAck(sock, rtt, windowSize, lastAck, &timeouted);
+		if (timeouted){ //Timeouted, but we know that the client does not drop ACK, then do not lower the window
+		    timeouted = 0;
 		}
                 else if (lastAck < (seq_nb-1)){//Check if there was an error
-                    windowSize = MAX(windowSize/2 , 1);
+                    windowSize = MAX(windowSize/1.1 , 20);
                 }else{
                     windowSize+=increase;//Increase the Window each RTT
 		}
-		printf("%d,%d,windowSize: %d\n", lastAck, seq_nb, windowSize);
+		//printf("%d,%d,windowSize: %d\n", lastAck, seq_nb, windowSize);
                 remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
                 seq_nb = lastAck+1;
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
@@ -148,7 +149,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                         break;
                     }
                 }
-                lastAck = checkAck(sock, rtt, windowSize, lastAck);
+                lastAck = checkAck(sock, rtt, windowSize, lastAck, &timeouted);
                 //printf("%d %d\n",lastAck,seq_nb);
                 ///printf("Seq nb : %d, remainder: %d lastAck %d \n", seq_nb, remainder , lastAck);
                 if (lastAck < seq_nb){
