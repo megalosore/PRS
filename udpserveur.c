@@ -12,6 +12,7 @@
 #define MAX_FILE_BUFFER 1466 * 100000 //142.48 Megabytes of memory used for the buffer
 #define BUFFER_SIZE 1472
 #define TIMEOUT_VALUE 5
+#define MAX(i, j) (((i) > (j)) ? (i) : (j))
 
 struct sockaddr_in addr_create(int port){ //Create local addr
     struct sockaddr_in my_addr;
@@ -40,14 +41,14 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
     duplicateAck[0] = lastAck; //The number of the ack we are waiting for
     duplicateAck[1] = 0;                           //Number of duplicate ack
     fd_set select_ack;
-    for (int i=1; i<windowSize; i++){
+    for (int i=0; i<windowSize; i++){
         memset(ackbuffer, 0, 10);
         FD_ZERO(&select_ack);
         FD_SET(sock, &select_ack);
         timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv); //wait for an ack
 
         if(!timeout_flag){//retransmit after time out 
-            //printf("Timeout: No ACK Received for seq %d\n",segmentNumber);
+            //printf("Timeout: No ACK Received for seq\n");
             return duplicateAck[0];
         }
         else{ //ACK received
@@ -56,19 +57,19 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
             char strACKNum[7];
             memcpy(strACKNum, ackbuffer+3,7);
             int ackNum = atoi(strACKNum);
-            printf("received ACK%i\n", ackNum);
+            //printf("received ACK%i\n", ackNum);
 
             if (duplicateAck[0] == ackNum){ //If we receive an already received ack do ++
                 duplicateAck[1] += 1;
             }else if (duplicateAck[0] < ackNum){ //If we receive a Higher ACK update the num
                     duplicateAck[0] = ackNum;
                     duplicateAck[1] = 1;
-            }else if ((duplicateAck[1] == 0) && (duplicateAck[0] > ackNum)){// If the ack is smaller just ignore
+            }else if (ackNum == 0){// Handling the special case where we lost the seqnb=1;
                     duplicateAck[0] = ackNum;
                     duplicateAck[1] = 1;
             }
         }
-        if (duplicateAck[1] >= 9){ //retransmit after 3 duplicate
+        if (duplicateAck[1] >= 3){ //retransmit after 3 duplicate
             //printf("Duplicate: Three duplicate ACK Received for seq %d\n",duplicateAck[0]);
             return duplicateAck[0];
         }
@@ -76,16 +77,16 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
     return duplicateAck[0]; // If no duplicate send back the last ack received 
 }
 
-void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t client_size, time_t rtt){ //read and send the file to the remote host
+void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t client_size, time_t rtt, int increase){ //read and send the file to the remote host
     //Initializing usefull variables
     int to_send;
     int seq_nb = 0;
     int reread = 1;
     int remainder;
     int lastRemainder;
-    int windowSize=100; //Every value are possible 
+    int windowSize=1; //Every value are possible
     int lastAck = 0;
-    
+    int tmp = 0;
     //Various buffers
     char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
     char *writebuffer = malloc(BUFFER_SIZE * sizeof(char));
@@ -120,7 +121,17 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                     sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
                 }
+		tmp = lastAck;
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
+		if (lastAck == tmp){ //Timeouted, but we know that the client does not drop ACK, then do not lower the window
+		    windowSize = windowSize;
+		}
+                else if (lastAck < (seq_nb-1)){//Check if there was an error
+                    windowSize = MAX(windowSize/2 , 1);
+                }else{
+                    windowSize+=increase;//Increase the Window each RTT
+		}
+		printf("%d,%d,windowSize: %d\n", lastAck, seq_nb, windowSize);
                 remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
                 seq_nb = lastAck+1;
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
@@ -146,7 +157,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                         seq_nb -= 1;
                     }
                     //printf("%d %d\n",seq_nb, lastAck);
-                    remainder += (seq_nb - (lastAck-1))*(BUFFER_SIZE-6);
+                    remainder += (seq_nb - lastAck)*(BUFFER_SIZE-6);
                 }
                 seq_nb = lastAck;
                 //printf("new Seq nb : %d, remainder: %d lastAck %d \n", seq_nb, remainder , lastAck);
@@ -170,12 +181,13 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
 
 int main(int argc, char* argv[]){
     //Checking args
-    if (argc != 2){
+    if (argc != 3){
         printf("Usage ./serveur <port_udp>\n");
         exit(1);
     }
     //Initialising variables
     int port_udp = atoi(argv[1]);
+    int increase = atoi(argv[2]);
     int currentport = port_udp;
     int reuse = 1;
     int udpsock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -271,7 +283,7 @@ int main(int argc, char* argv[]){
                         break;
                     }
 
-                    send_file(file, newsock, new_client_addr, new_client_taille, rtt);
+                    send_file(file, newsock, new_client_addr, new_client_taille, rtt, increase);
 
                     fclose(file);
                     close(newsock);
@@ -280,5 +292,3 @@ int main(int argc, char* argv[]){
         }
     }
 }
-
-
