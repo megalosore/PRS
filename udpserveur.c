@@ -22,10 +22,10 @@ struct sockaddr_in addr_create(int port){ //Create local addr
     return my_addr;
 }
 
-void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int *segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
-            int file_counter = (*segmentNumber-1)%100000;
+void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
+            int file_counter = (segmentNumber-1)%100000;
             memset(writebuffer, 0, BUFFER_SIZE);
-            snprintf(writebuffer, 7, "%d", *segmentNumber);
+            snprintf(writebuffer, 7, "%d", segmentNumber);
             memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), msgSize-6); // -6 account for the char used by the seq number
             sendto(sock, writebuffer, msgSize, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
             *remainder = *remainder - (msgSize - 6);
@@ -56,7 +56,7 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
             char strACKNum[7];
             memcpy(strACKNum, ackbuffer+3,7);
             int ackNum = atoi(strACKNum);
-            printf("received ACK%i\n", ackNum);
+            //printf("received ACK%i\n", ackNum);
 
             if (duplicateAck[0] == ackNum){ //If we receive an already received ack do ++
                 duplicateAck[1] += 1;
@@ -82,7 +82,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int seq_nb = 0;
     int reread = 1;
     int remainder;
-    int lastRemainder;
+    
     int windowSize=100; //Every value are possible 
     int lastAck = 0;
     
@@ -114,41 +114,58 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         }
         //file_counter = 0;
         remainder = to_send;
-        while(remainder != 0){
+        int nbOfPacketAlreadySent=0;
+        int lastRemainder=0;
+        while(remainder != 0 || nbOfPacketAlreadySent!=0){
             while(remainder > windowSize*(BUFFER_SIZE - 6)){
-                for (int i=0; i<windowSize; i++){
-                    sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                for (int i=nbOfPacketAlreadySent; i<windowSize; i++){
+                    sendSegmentByNumber(sock,client_addr,client_size, seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
+                    nbOfPacketAlreadySent++;
                 }
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
-                remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
-                seq_nb = lastAck+1;
+                //printf("lastACK : %d, nbOfPacketAlreadySent %d, remainder: %d\n", lastAck,nbOfPacketAlreadySent, remainder);
+                nbOfPacketAlreadySent=seq_nb-1-lastAck;
+                sendSegmentByNumber(sock,client_addr,client_size, lastAck+1,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);//if lastAck<seqnb
+                //nbOfPacketAlreadySent++;
+                remainder += (BUFFER_SIZE - 6);
+                ;
+                //printf("Seq nb : %d, lastACK : %d, nbOfPacketAlreadySent %d, remainder: %d\n",seq_nb, lastAck,nbOfPacketAlreadySent, remainder);
+                //remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
 
             }
-            if ((remainder > 0) && (remainder <= windowSize*(BUFFER_SIZE - 6))){
-                for (int i=0; i<windowSize; i++){
+            if ((remainder >= 0) && (remainder <= windowSize*(BUFFER_SIZE - 6))){
+                for (int i=nbOfPacketAlreadySent; i<windowSize; i++){
                     if (remainder > BUFFER_SIZE - 6){
-                        sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                        sendSegmentByNumber(sock,client_addr,client_size, seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                         seq_nb++;
-                    }else{
+                    }else if (remainder > 0){
                         lastRemainder = remainder;
-                        sendSegmentByNumber(sock,client_addr,client_size,&seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
+                        sendSegmentByNumber(sock,client_addr,client_size,seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
+                        seq_nb++;
+                        //printf("last2 Seq nb : %d, lastACK : %d, nbOfPacketAlreadySent %d, remainder: %d\n",seq_nb, lastAck,nbOfPacketAlreadySent, remainder);
                         break;
                     }
                 }
+                
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
+                //printf("lastACK : %d, nbOfPacketAlreadySent %d, remainder: %d\n", lastAck,nbOfPacketAlreadySent, remainder);
+                nbOfPacketAlreadySent=seq_nb-1-lastAck;
+                if (lastRemainder!=0 && lastAck==seq_nb-2){
+                    sendSegmentByNumber(sock,client_addr,client_size, lastAck+1,writebuffer,file_buffer,ackbuffer,&remainder,lastRemainder+6);   
+                    remainder += lastRemainder; 
+                    printf("last Seq nb : %d, lastACK : %d, nbOfPacketAlreadySent %d, remainder: %d\n",seq_nb, lastAck,nbOfPacketAlreadySent, remainder);
+                    //nbOfPacketAlreadySent++;
+                }else if(nbOfPacketAlreadySent!=0){
+                    
+                    sendSegmentByNumber(sock,client_addr,client_size, lastAck+1,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);//if lastAck<seqnb
+                    //nbOfPacketAlreadySent++;
+                    remainder += (BUFFER_SIZE - 6);
+                    //printf("Seq nb : %d, lastACK : %d, nbOfPacketAlreadySent %d, remainder: %d\n",seq_nb, lastAck,nbOfPacketAlreadySent, remainder);
+                }
                 //printf("%d %d\n",lastAck,seq_nb);
                 ///printf("Seq nb : %d, remainder: %d lastAck %d \n", seq_nb, remainder , lastAck);
-                if (lastAck < seq_nb){
-                    if (remainder == 0){
-                        remainder += lastRemainder;
-                        seq_nb -= 1;
-                    }
-                    //printf("%d %d\n",seq_nb, lastAck);
-                    remainder += (seq_nb - (lastAck-1))*(BUFFER_SIZE-6);
-                }
-                seq_nb = lastAck;
                 //printf("new Seq nb : %d, remainder: %d lastAck %d \n", seq_nb, remainder , lastAck);
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
             }
