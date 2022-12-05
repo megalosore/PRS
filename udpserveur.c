@@ -13,13 +13,6 @@
 #define BUFFER_SIZE 1472
 #define TIMEOUT_VALUE 5
 
-void clearSocket(void) 
-{ 
-      int garbageCollector; 
-      while ((garbageCollector = getchar()) != '\n' && garbageCollector != EOF) 
-      {}
-}
-
 struct sockaddr_in addr_create(int port){ //Create local addr
     struct sockaddr_in my_addr;
     memset((char*)&my_addr, 0, sizeof(my_addr));
