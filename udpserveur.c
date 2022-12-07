@@ -90,18 +90,22 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     char *writebuffer = malloc(BUFFER_SIZE * sizeof(char));
     char *ackbuffer = malloc(10 * sizeof(char));
 
-    //getting file size
+    //getting file 
+    printf("here1\n");
     fseek(fd, 0, SEEK_END); 
     int to_read = ftell(fd);
     rewind(fd);
-
+    printf("here2\n");
     
+     
     while(reread){
         seq_nb++;
         //Loading the file in the memory
         if (MAX_FILE_BUFFER > to_read){
             //The whole file fit in the buffer
+            printf("here3\n");
             fread(file_buffer, to_read, 1, fd);
+            printf("here4\n");
             to_send = to_read;
             to_read = 0;
             reread = 0;
@@ -232,12 +236,14 @@ int main(int argc, char* argv[]){
                 printf("SYN Received\n");
                 currentport++;
 
+
                 //Create the new Socket
+
                 int newsock;
-	            if ( (newsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
-		            perror("socket creation failed");
-		            break;
-	            }
+                if ( (newsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
+                    perror("socket creation failed");
+                    break;
+                }
                 struct sockaddr_in newservaddr = addr_create(currentport);
                 bind(newsock, (struct sockaddr *)&newservaddr, sizeof(newservaddr));
                 //Sending the ACK and the port
@@ -253,45 +259,56 @@ int main(int argc, char* argv[]){
                 FD_ZERO(&fd_select);
                 FD_SET(udpsock, &fd_select);
 
-                //Waiting for ACK
-                int timeout = select(port_udp+1, &fd_select, NULL, NULL, &tv);
-                if (timeout == -1){
-                    printf("Select error line 89\n");
-                    break;
-                }
-                else if (timeout == 0){
-                    printf("ACK timeout\n");
-                    break;
+                int process=0;
+                process=fork();
+                if (process==0){
+                    close(newsock);
                 }else{
-                    gettimeofday(&end, NULL);
-                    time_t rtt = (end.tv_sec - start.tv_sec) * 1000000 + end.tv_usec - start.tv_usec;
-                    memset(udpreadbuffer, 0, sizeof(udpreadbuffer));
-                    recvfrom(udpsock, (char *)udpreadbuffer, sizeof(udpreadbuffer), MSG_WAITALL, ( struct sockaddr *) &client_addr, &client_taille);
-                    if (strncmp(udpreadbuffer,"ACK",3)){
-                        printf("Malformed ACK received\n");
-                        exit(1);
-                    }
-
-                    printf("3 way handhsake completed| RTT is %ld us\n", rtt);
-                    memset(udpreadbuffer, 0, sizeof(udpreadbuffer));
-                    //Waiting for the filename
-                    recvfrom(newsock, (char *)udpreadbuffer, sizeof(udpreadbuffer), MSG_WAITALL, ( struct sockaddr *) &new_client_addr, &new_client_taille);
-                    printf("%s\n",udpreadbuffer);
-
-                    //Preparing the file
-                    FILE* file = NULL;
-                    file = fopen(udpreadbuffer, "r");
-                    printf("here1\n");
-                    if (file == NULL){
-                        printf("File does not exist ERROR\n");
+                    //Waiting for ACK
+                    int timeout = select(port_udp+1, &fd_select, NULL, NULL, &tv);
+                    if (timeout == -1){
+                        printf("Select error line 89\n");
                         break;
                     }
+                    else if (timeout == 0){
+                        printf("ACK timeout\n");
+                        break;
+                    }else{
+                        gettimeofday(&end, NULL);
+                        time_t rtt = (end.tv_sec - start.tv_sec) * 1000000 + end.tv_usec - start.tv_usec;
+                        memset(udpreadbuffer, 0, sizeof(udpreadbuffer));
+                        recvfrom(udpsock, (char *)udpreadbuffer, sizeof(udpreadbuffer), MSG_WAITALL, ( struct sockaddr *) &client_addr, &client_taille);
+                        if (strncmp(udpreadbuffer,"ACK",3)){
+                            printf("Malformed ACK received\n");
+                            exit(1);
+                        }
+                        close(udpsock);
+                        printf("3 way handhsake completed| RTT is %ld us\n", rtt);
+                        memset(udpreadbuffer, 0, sizeof(udpreadbuffer));
+                        printf("waitingForFilename %d\n",currentport);
+                        //Waiting for the filename
+                        recvfrom(newsock, (char *)udpreadbuffer, sizeof(udpreadbuffer), MSG_WAITALL, ( struct sockaddr *) &new_client_addr, &new_client_taille);
+                        printf("here0 %d\n",currentport);
+                        printf("%s\n",udpreadbuffer);
 
-                    send_file(file, newsock, new_client_addr, new_client_taille, rtt);
+                        //Preparing the file
+                        FILE* file = NULL;
+                        file = fopen(udpreadbuffer, "r");
+                        printf("here1\n");
+                        if (file == NULL){
+                            printf("File does not exist ERROR\n");
+                            break;
+                        }
 
-                    fclose(file);
-                    close(newsock);
+                        send_file(file, newsock, new_client_addr, new_client_taille, rtt);
+
+                        fclose(file);
+                        close(newsock);
+                        break;
+                        
+                    }   
                 }
+            
             }
         }
     }
