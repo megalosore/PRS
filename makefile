@@ -1,4 +1,4 @@
 all: udpserveur
 
 udpserveur: udpserveur.c
-	gcc -Wall udpserveur.c -o udpserveur
+	gcc udpserveur.c -o udpserveur
