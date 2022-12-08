@@ -12,6 +12,8 @@
 #define MAX_FILE_BUFFER 1466 * 100000 //142.48 Megabytes of memory used for the buffer
 #define BUFFER_SIZE 1472
 #define TIMEOUT_VALUE 5
+#define MAX(x, y) (x > y ? x : y)
+#define MIN(x, y) (x < y ? x : y)
 
 struct sockaddr_in addr_create(int port){ //Create local addr
     struct sockaddr_in my_addr;
@@ -81,7 +83,9 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int reread = 1;
     int garbage = 0;
     int remainder;
-    int windowSize=60; //Every value are possible 
+    
+    int maxwindowSize=100;
+    int windowSize=20; //Every value are possible 
     int lastAck = 0;
     int tmpAck = 0;
     
@@ -120,17 +124,19 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                 for (;nbOfPacketAlreadySent<windowSize; nbOfPacketAlreadySent++){
                     sendSegmentByNumber(sock,client_addr,client_size, seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
-                    if (nbOfPacketAlreadySent < windowSize-1){ // Artificially added sleep
-                        usleep(300);
-                    }
                 }
                 tmpAck = lastAck;
                 lastAck = checkAck(sock, rtt, lastAck, seq_nb);
                 nbOfPacketAlreadySent -= (lastAck - tmpAck);
-                //printf("Waiting for ACK: %d, lastAck: %d, seqn: %d\n", nbOfPacketAlreadySent, lastAck, seq_nb);
-                if(nbOfPacketAlreadySent != 0){
+                if (lastAck == seq_nb-1){ //No loss
+                    windowSize = MIN(maxwindowSize, windowSize+1);
+                }else{
+                    if (lastAck != tmpAck){
+                        windowSize = MAX(1,windowSize/2);
+                    }
                     sendSegmentByNumber(sock,client_addr,client_size, lastAck+1,writebuffer,file_buffer,ackbuffer,&garbage,BUFFER_SIZE);
                 }
+                 //printf("Waiting %d ACK,window: %d, lastAck: %d, seqn: %d\n", nbOfPacketAlreadySent, windowSize, lastAck, seq_nb);
             }
             if ((remainder > 0) && (remainder <= windowSize*(BUFFER_SIZE - 6))){
                 //printf("Remainder: %d\n", remainder);
