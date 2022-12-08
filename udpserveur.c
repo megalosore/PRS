@@ -46,7 +46,7 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
         FD_SET(sock, &select_ack);
         timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv); //wait for an ack
 
-        if(!timeout_flag){//retransmit after time out 
+        if(!timeout_flag){//retransmit after time out
             //printf("Timeout: No ACK Received for seq %d\n",segmentNumber);
             return duplicateAck[0];
         }
@@ -56,7 +56,7 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
             char strACKNum[7];
             memcpy(strACKNum, ackbuffer+3,7);
             int ackNum = atoi(strACKNum);
-            printf("received ACK%i\n", ackNum);
+            //printf("received ACK%i\n", ackNum);
 
             if (duplicateAck[0] == ackNum){ //If we receive an already received ack do ++
                 duplicateAck[1] += 1;
@@ -73,7 +73,7 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
             return duplicateAck[0];
         }
     }
-    return duplicateAck[0]; // If no duplicate send back the last ack received 
+    return duplicateAck[0]; // If no duplicate send back the last ack received
 }
 
 void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t client_size, time_t rtt){ //read and send the file to the remote host
@@ -83,16 +83,16 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int reread = 1;
     int remainder;
     int lastRemainder;
-    int windowSize=100; //Every value are possible 
+    int windowSize=100; //Every value are possible
     int lastAck = 0;
-    
+
     //Various buffers
     char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
     char *writebuffer = malloc(BUFFER_SIZE * sizeof(char));
     char *ackbuffer = malloc(10 * sizeof(char));
 
     //getting file size
-    fseek(fd, 0, SEEK_END); 
+    fseek(fd, 0, SEEK_END);
     int to_read = ftell(fd);
     rewind(fd);
     //sending the file
@@ -119,6 +119,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                 for (int i=0; i<windowSize; i++){
                     sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
+		    //usleep(5);
                 }
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
                 remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
@@ -218,16 +219,16 @@ int main(int argc, char* argv[]){
 
                 //Create the new Socket
                 int newsock;
-	            if ( (newsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
-		            perror("socket creation failed");
-		            break;
-	            }
+                    if ( (newsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
+                            perror("socket creation failed");
+                            break;
+                    }
                 struct sockaddr_in newservaddr = addr_create(currentport);
                 bind(newsock, (struct sockaddr *)&newservaddr, sizeof(newservaddr));
                 //Sending the ACK and the port
                 memset(writebuffer, 0, sizeof(writebuffer));
                 snprintf(writebuffer, sizeof(writebuffer), "SYN-ACK%i", currentport);
-                
+
                 struct timeval tv = {TIMEOUT_VALUE, 0};                 //Prepare a timeout
                 struct timeval start, end;                              //Mesure RTT
                 gettimeofday(&start, NULL);
@@ -280,5 +281,3 @@ int main(int argc, char* argv[]){
         }
     }
 }
-
-
