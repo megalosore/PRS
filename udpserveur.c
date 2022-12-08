@@ -33,7 +33,7 @@ void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t cli
 
 int checkAck(int sock,time_t rtt, int lastAck, int seq_nb){
     //Return the new value that segmentNumber should take;
-    struct timeval tv = {0, 1000 + rtt};//20 time the round trip measured just to be safe
+    struct timeval tv = {0, 2000 + rtt};//20 time the round trip measured just to be safe
     int timeout_flag;
     char ackbuffer[10];
     int duplicateAck[2];
