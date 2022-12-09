@@ -67,7 +67,7 @@ int checkAck(int sock,time_t rtt, int lastAck, int seq_nb){
         }
         if (duplicateAck[1] >= 3){ //retransmit after 3 duplicate
             //printf("Duplicate: Three duplicate ACK Received for seq %d\n",duplicateAck[0]);
-            recv(sock, NULL, 1500 * 100, MSG_DONTWAIT); //Emptying the buffer queue
+	    while ((recv(sock, NULL, 10, 0)) > 0);
             return duplicateAck[0];
         }
     }
