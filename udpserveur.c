@@ -22,10 +22,10 @@ struct sockaddr_in addr_create(int port){ //Create local addr
     return my_addr;
 }
 
-void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int *segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
-            int file_counter = (*segmentNumber-1)%100000;
-            memset(writebuffer, 0, BUFFER_SIZE);
-            snprintf(writebuffer, 7, "%d", *segmentNumber);
+void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
+            int file_counter = (segmentNumber-1)%100000;
+            //memset(writebuffer, 0, BUFFER_SIZE);
+            snprintf(writebuffer, 7, "%d", segmentNumber); //Potentially super slow
             memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), msgSize-6); // -6 account for the char used by the seq number
             sendto(sock, writebuffer, msgSize, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
             *remainder = *remainder - (msgSize - 6);
@@ -33,43 +33,50 @@ void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t cli
 
 int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
     //Return the new value that segmentNumber should take;
-    struct timeval tv = {0, 8000 + rtt};//20 time the round trip measured just to be safe
+    struct timeval tv = {0, 1000 + rtt};//20 time the round trip measured just to be safe
     int timeout_flag;
     char ackbuffer[10];
     int duplicateAck[2];
     duplicateAck[0] = lastAck; //The number of the ack we are waiting for
     duplicateAck[1] = 0;                           //Number of duplicate ack
     fd_set select_ack;
-    for (int i=1; i<windowSize; i++){
-        memset(ackbuffer, 0, 10);
+    while(1){
+        //memset(ackbuffer, 0, 10);
         FD_ZERO(&select_ack);
         FD_SET(sock, &select_ack);
+        tv.tv_sec = 0;
+        tv.tv_usec = 1000 + rtt;
         timeout_flag = select(sock+1, &select_ack, NULL, NULL, &tv); //wait for an ack
 
         if(!timeout_flag){//retransmit after time out
-            //printf("Timeout: No ACK Received for seq %d\n",segmentNumber);
             return duplicateAck[0];
         }
         else{ //ACK received
-            recv(sock, ackbuffer, sizeof(ackbuffer)+1, MSG_WAITALL);
+            recv(sock, ackbuffer, sizeof(ackbuffer)+1, 0);
             //Extract the ackNum
             char strACKNum[7];
             memcpy(strACKNum, ackbuffer+3,7);
             int ackNum = atoi(strACKNum);
             //printf("received ACK%i\n", ackNum);
 
+            if (ackNum <= lastAck){ // Older ACK
+                continue;
+            }
             if (duplicateAck[0] == ackNum){ //If we receive an already received ack do ++
                 duplicateAck[1] += 1;
             }else if (duplicateAck[0] < ackNum){ //If we receive a Higher ACK update the num
                     duplicateAck[0] = ackNum;
                     duplicateAck[1] = 1;
-            }else if ((duplicateAck[1] == 0) && (duplicateAck[0] > ackNum)){// If the ack is smaller just ignore
-                    duplicateAck[0] = ackNum;
-                    duplicateAck[1] = 1;
+            }else if (duplicateAck[0] == 0){// If the ack is smaller just ignore
+                    return 0;
             }
         }
-        if (duplicateAck[1] >= 9){ //retransmit after 3 duplicate
+        if ((duplicateAck[1] >= 1) && ((duplicateAck[0] - lastAck) < (50))){
             //printf("Duplicate: Three duplicate ACK Received for seq %d\n",duplicateAck[0]);
+            return duplicateAck[0];
+        }else if ((duplicateAck[1] >= 2) && ((duplicateAck[0] - lastAck) < 66)){
+            return duplicateAck[0];
+        }else if ((duplicateAck[1] >= 3) && ((duplicateAck[0] - lastAck) <= 101)){
             return duplicateAck[0];
         }
     }
@@ -85,6 +92,8 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int lastRemainder;
     int windowSize=100; //Every value are possible
     int lastAck = 0;
+    int tmpAck = 0;
+    int garbage = 0;
 
     //Various buffers
     char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
@@ -117,11 +126,17 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         while(remainder != 0){
             while(remainder > windowSize*(BUFFER_SIZE - 6)){
                 for (int i=0; i<windowSize; i++){
-                    sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                    sendSegmentByNumber(sock,client_addr,client_size, seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
-		    //usleep(5);
                 }
-                lastAck = checkAck(sock, rtt, windowSize, lastAck);
+                tmpAck = lastAck;
+                while(1){
+                    lastAck = checkAck(sock, rtt, windowSize, lastAck);
+                    if ((lastAck - tmpAck) > 90){
+                        break;
+                    }
+                    sendSegmentByNumber(sock,client_addr,client_size, lastAck+1,writebuffer,file_buffer,ackbuffer,&garbage,BUFFER_SIZE);
+                }
                 remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
                 seq_nb = lastAck+1;
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
@@ -130,11 +145,11 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             if ((remainder > 0) && (remainder <= windowSize*(BUFFER_SIZE - 6))){
                 for (int i=0; i<windowSize; i++){
                     if (remainder > BUFFER_SIZE - 6){
-                        sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                        sendSegmentByNumber(sock,client_addr,client_size, seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                         seq_nb++;
                     }else{
                         lastRemainder = remainder;
-                        sendSegmentByNumber(sock,client_addr,client_size,&seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
+                        sendSegmentByNumber(sock,client_addr,client_size,seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
                         break;
                     }
                 }
@@ -164,7 +179,6 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     free(writebuffer);
     free(file_buffer);
     free(ackbuffer);
-    sleep(1);
     sendto(sock, "FIN", 3, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
     //I WILL MAKE YOU STOP IF YOU DIDNT (Do not remove the client is DUMB)
 }
