@@ -33,7 +33,7 @@ void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t cli
 
 int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
     //Return the new value that segmentNumber should take;
-    struct timeval tv = {0, 8000 + rtt};//20 time the round trip measured just to be safe
+    struct timeval tv = {0, 3000 + rtt};//20 time the round trip measured just to be safe
     int timeout_flag;
     char ackbuffer[10];
     int duplicateAck[2];
@@ -83,7 +83,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int reread = 1;
     int remainder;
     int lastRemainder;
-    int windowSize=100; //Every value are possible
+    int windowSize=20; //Every value are possible
     int lastAck = 0;
 
     //Various buffers
