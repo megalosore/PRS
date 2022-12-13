@@ -33,7 +33,7 @@ void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t cli
 
 int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
     //Return the new value that segmentNumber should take;
-    struct timeval tv = {0, 8000 + rtt};//20 time the round trip measured just to be safe
+    struct timeval tv = {0, 2000 + rtt};//20 time the round trip measured just to be safe
     int timeout_flag;
     char ackbuffer[10];
     int duplicateAck[2];
@@ -68,7 +68,7 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
                     duplicateAck[1] = 1;
             }
         }
-        if (duplicateAck[1] >= 9){ //retransmit after 3 duplicate
+        if (duplicateAck[1] >= 17){ //retransmit after 3 duplicate
             //printf("Duplicate: Three duplicate ACK Received for seq %d\n",duplicateAck[0]);
             return duplicateAck[0];
         }
@@ -83,7 +83,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int reread = 1;
     int remainder;
     int lastRemainder;
-    int windowSize=100; //Every value are possible
+    int windowSize=50; //Every value are possible
     int lastAck = 0;
 
     //Various buffers
@@ -119,7 +119,6 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
                 for (int i=0; i<windowSize; i++){
                     sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
-		    //usleep(5);
                 }
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
                 remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
