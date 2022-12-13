@@ -40,7 +40,9 @@ int checkAck(int sock,time_t rtt, int lastAck, int seq_nb,int *blocked){
     duplicateAck[0] = lastAck; //The number of the ack we are waiting for
     duplicateAck[1] = 0;                           //Number of duplicate ack
     fd_set select_ack;
+
     while(duplicateAck[0] < (seq_nb-1)){
+
         memset(ackbuffer, 0, 10);
         FD_ZERO(&select_ack);
         FD_SET(sock, &select_ack);
@@ -48,9 +50,9 @@ int checkAck(int sock,time_t rtt, int lastAck, int seq_nb,int *blocked){
 
         if(!timeout_flag){//retransmit after time out 
             //printf("Timeout: No ACK Received for seq %d\n",segmentNumber);
-            *blocked++;
+            *blocked= *blocked +1;
             if(*blocked==100) exit(0);
-            
+         
             return duplicateAck[0];
         }
         else{ //ACK received
