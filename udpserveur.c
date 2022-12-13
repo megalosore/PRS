@@ -244,7 +244,7 @@ int main(int argc, char* argv[]){
                 }else{
 
                     close(udpsock);
-                    time_t rtt = 2500;
+                    time_t rtt = 1; // Don't care for now
                     printf("3 way handhsake completed| RTT is %ld us\n", rtt);
                     memset(udpreadbuffer, 0, sizeof(udpreadbuffer));
                     printf("waitingForFilename %d\n\n",currentport);
