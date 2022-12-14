@@ -22,16 +22,16 @@ struct sockaddr_in addr_create(int port){ //Create local addr
     return my_addr;
 }
 
-void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int *segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
-            int file_counter = (*segmentNumber-1)%100000;
+void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
+            int file_counter = (segmentNumber-1)%100000;
             memset(writebuffer, 0, BUFFER_SIZE);
-            snprintf(writebuffer, 7, "%d", *segmentNumber);
+            snprintf(writebuffer, 7, "%d", segmentNumber);
             memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), msgSize-6); // -6 account for the char used by the seq number
             sendto(sock, writebuffer, msgSize, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
             *remainder = *remainder - (msgSize - 6);
 }
 
-int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
+int checkAck(int sock,time_t rtt, int windowSize, int lastAck , int *blocked){
     //Return the new value that segmentNumber should take;
     struct timeval tv = {0, 3000 + rtt};//20 time the round trip measured just to be safe
     int timeout_flag;
@@ -48,9 +48,12 @@ int checkAck(int sock,time_t rtt, int windowSize, int lastAck){
 
         if(!timeout_flag){//retransmit after time out
             //printf("Timeout: No ACK Received for seq %d\n",segmentNumber);
+            *blocked= *blocked +1;
+            if(*blocked==100) exit(0);
             return duplicateAck[0];
         }
         else{ //ACK received
+            *blocked=0;
             recv(sock, ackbuffer, sizeof(ackbuffer)+1, MSG_WAITALL);
             //Extract the ackNum
             char strACKNum[7];
@@ -85,7 +88,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int lastRemainder;
     int windowSize=50; //Every value are possible
     int lastAck = 0;
-
+    int blocked = 0;
     //Various buffers
     char *file_buffer = malloc(MAX_FILE_BUFFER * sizeof(char)); //We will load the file in memory before sending (it is faster)
     char *writebuffer = malloc(BUFFER_SIZE * sizeof(char));
@@ -96,7 +99,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
     int to_read = ftell(fd);
     rewind(fd);
     //sending the file
-        //sending the file
+        //sending the fileprocess=forprocess=for
     while(reread){
         seq_nb++;
         //Loading the file in the memory
@@ -117,10 +120,10 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         while(remainder != 0){
             while(remainder > windowSize*(BUFFER_SIZE - 6)){
                 for (int i=0; i<windowSize; i++){
-                    sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                    sendSegmentByNumber(sock,client_addr,client_size, seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
                 }
-                lastAck = checkAck(sock, rtt, windowSize, lastAck);
+                lastAck = checkAck(sock, rtt, windowSize, lastAck, &blocked);
                 remainder += (seq_nb - lastAck-1)*(BUFFER_SIZE - 6);
                 seq_nb = lastAck+1;
                 //printf("New Seq nb : %d, remainder: %d\n", seq_nb, remainder);
@@ -129,15 +132,15 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             if ((remainder > 0) && (remainder <= windowSize*(BUFFER_SIZE - 6))){
                 for (int i=0; i<windowSize; i++){
                     if (remainder > BUFFER_SIZE - 6){
-                        sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                        sendSegmentByNumber(sock,client_addr,client_size, seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                         seq_nb++;
                     }else{
                         lastRemainder = remainder;
-                        sendSegmentByNumber(sock,client_addr,client_size,&seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
+                        sendSegmentByNumber(sock,client_addr,client_size,seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
                         break;
                     }
                 }
-                lastAck = checkAck(sock, rtt, windowSize, lastAck);
+                lastAck = checkAck(sock, rtt, windowSize, lastAck, &blocked);
                 //printf("%d %d\n",lastAck,seq_nb);
                 ///printf("Seq nb : %d, remainder: %d lastAck %d \n", seq_nb, remainder , lastAck);
                 if (lastAck < seq_nb){
@@ -174,10 +177,14 @@ int main(int argc, char* argv[]){
         printf("Usage ./serveur <port_udp>\n");
         exit(1);
     }
+    if (atoi(argv[1])<1024 || atoi(argv[1])>9999){
+        printf("veuillez Saisir un port compris entre 1000 et 9999\n");
+        exit(1);
+    }
     //Initialising variables
     int port_udp = atoi(argv[1]);
     int process;
-    int currentport = port_udp-10;
+    int currentport = port_udp;
     int reuse = 1;
     int udpsock = socket(AF_INET, SOCK_DGRAM, 0);
     char udpreadbuffer[BUFFER_SIZE];
@@ -212,8 +219,8 @@ int main(int argc, char* argv[]){
             if (strncmp(udpreadbuffer, "SYN", 3)==0){
                 currentport=(currentport+1)%10000;
                 printf("SYN Received\n");
-                while((currentport<2000 || currentport==5353)||currentport== port_udp){
-                    if (currentport<2000)currentport+=2000;
+                while((currentport<1024 || currentport==5353)||currentport== port_udp){
+                    if (currentport<1024)currentport+=1024;
                     currentport=(currentport+1)%10000;
                 }
 
