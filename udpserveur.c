@@ -22,10 +22,10 @@ struct sockaddr_in addr_create(int port){ //Create local addr
     return my_addr;
 }
 
-void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int *segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
-            int file_counter = (*segmentNumber-1)%100000;
+void sendSegmentByNumber(int sock, struct sockaddr_in client_addr, socklen_t client_size, int segmentNumber,char *writebuffer,char *file_buffer,char *ackbuffer, int *remainder,int msgSize){
+            int file_counter = (segmentNumber-1)%100000;
             memset(writebuffer, 0, BUFFER_SIZE);
-            snprintf(writebuffer, 7, "%d", *segmentNumber);
+            snprintf(writebuffer, 7, "%d", segmentNumber);
             memcpy(writebuffer + 6, file_buffer + (file_counter * (BUFFER_SIZE-6)), msgSize-6); // -6 account for the char used by the seq number
             sendto(sock, writebuffer, msgSize, MSG_CONFIRM, (const struct sockaddr *) &client_addr, client_size);
             *remainder = *remainder - (msgSize - 6);
@@ -117,7 +117,7 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
         while(remainder != 0){
             while(remainder > windowSize*(BUFFER_SIZE - 6)){
                 for (int i=0; i<windowSize; i++){
-                    sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                    sendSegmentByNumber(sock,client_addr,client_size, seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                     seq_nb++;
                 }
                 lastAck = checkAck(sock, rtt, windowSize, lastAck);
@@ -129,11 +129,11 @@ void send_file(FILE* fd, int sock, struct sockaddr_in client_addr, socklen_t cli
             if ((remainder > 0) && (remainder <= windowSize*(BUFFER_SIZE - 6))){
                 for (int i=0; i<windowSize; i++){
                     if (remainder > BUFFER_SIZE - 6){
-                        sendSegmentByNumber(sock,client_addr,client_size, &seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
+                        sendSegmentByNumber(sock,client_addr,client_size, seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,BUFFER_SIZE);
                         seq_nb++;
                     }else{
                         lastRemainder = remainder;
-                        sendSegmentByNumber(sock,client_addr,client_size,&seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
+                        sendSegmentByNumber(sock,client_addr,client_size,seq_nb,writebuffer,file_buffer,ackbuffer,&remainder,remainder+6);
                         break;
                     }
                 }
@@ -172,6 +172,10 @@ int main(int argc, char* argv[]){
     //Checking args
     if (argc != 2){
         printf("Usage ./serveur <port_udp>\n");
+        exit(1);
+    }
+    if (atoi(argv[1])<1024 || atoi(argv[1])>9999){
+        printf("veuillez Saisir un port compris entre 1024 et 9999\n");
         exit(1);
     }
     //Initialising variables
@@ -214,7 +218,10 @@ int main(int argc, char* argv[]){
                 break;
             }else{
                 printf("SYN Received\n");
-                currentport++;
+                while((currentport<1024 || currentport==5353)||currentport== port_udp){
+                    if (currentport<1024)currentport+=1024;
+                    currentport=(currentport+1)%10000;
+                }
 
                 //Create the new Socket
                 int newsock;
